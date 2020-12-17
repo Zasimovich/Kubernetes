@@ -23,10 +23,69 @@ Current reclaim policies are:
 Currently, only NFS and HostPath support recycling. AWS EBS, GCE PD, Azure Disk, and Cinder volumes support deletion.
 
 ```
+PersistentVolume могут быть созданы двумя способами — динамически (рекомендуемый способ), и статически.
+
+При статичном методе сначала создаётся набор дисков, например EBS, которые затем используются кластером для PersistentVolumeClaim.
+
+В случе, если для PersistentVolumeClaim не удалось найди подходящий PV — кластер может создать отдельный PV конкретно для этого PVC — это и будет динамическое создание PVC.
+
+При этом в PVC должен быть задан Storage Class, и такой класс должен поддерживаться кластером.
 
 
+## Типы дисков
 
+Для понимания роли PersistentVolume — рассмотрим доступные системы хранения:
 
+    Node-local хранение (emptyDir и hostPath) - Хранят данные на диске Ноды на котором запущен под. Даже если под перезапустится, данные с ноды не удалятся. Удалятся они только в случае удаления пода в ручную.
+    Cloud volumes (например, awsElasticBlockStore, gcePersistentDisk и azureDiskVolume)
+    File-sharing volumes, такие как Network File System
+    Distributed-file systems (например, CephFS, RBD и GlusterFS)
+    специальные типы разделов, такие как PersistentVolumeClaim, secret, ConfigMap и gitRepo
+
+# Создание AWS EBS и привязываение его в ручную к PV
+\# aws ec2 --profile arseniy --region us-east-2 create-volume --availability-zone us-east-2a --size 50
+Мы получаем vol-ID типа - "VolumeId": "vol-0928650905a2491e2"
+И далее создаем PV
+
+```
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-static
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  awsElasticBlockStore:
+    fsType: ext4
+    volumeID: vol-0928650905a2491e2
+```
+- тут ReadWriteOnce — раздел может быть смонтирован только к одной рабочей ноде с правами чтения/записи
+
+## StorageClass
+Параметр storageClassName определяет тип хранилища.
+И для PVC, и для PV должен быть задан один и тот же класс, иначе PVC не подключит PV, и STATUS такого PVC будет Pending.
+Если для PVC не задан StorageClass — будет использован дефолтный:
+
+## Создание PersistentVolumeClaim
+Добавляем PersistentVolumeClaim, который будет использовать этот PV:
+
+```
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pvc-static
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: pv-static
+  ```
+  
 
 
 
@@ -42,10 +101,8 @@ Currently, only NFS and HostPath support recycling. AWS EBS, GCE PD, Azure Disk,
 [Kubernetes node affinity: Placing pods on specific nodes](https://github.com/Zasimovich/Kubernetes/tree/PV-PVC/StorageClass-PV-PVC)
 
  - [Node Selector](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector)
-
  - [Node Affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#node-affinity)
 node affinity: Placing pods on specific nodes
- 
  - [Pod Affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
  - [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
 
@@ -85,8 +142,7 @@ spec:
         name: nginx
 ```
 Besides the **requiredDuringSchedulingIgnoredDuringExecution** type of node affinity there exists **preferredDuringSchedulingIgnoredDuringExecution**. The first can be thought of as a “hard” rule, while the second constitutes a “soft” rule that Kubernetes tries to enforce but will not guarantee.
-
-you can indicate that the rule is “soft” rather than a hard requirement, so if the scheduler can’t satisfy it, the pod will still be scheduled.
+  You can indicate that the rule is “soft” rather than a hard requirement, so if the scheduler can’t satisfy it, the pod will still be scheduled.
 
 # Test section for Formatting: URL: https://docs.gitlab.com/ee/user/markdown.html
 
