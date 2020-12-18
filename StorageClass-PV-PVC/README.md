@@ -150,6 +150,9 @@ spec:
         - mountPath: "/usr/share/nginx/html"
           name: pv-static-storage
 ```
+
+![Alt text](pictures/img1.png?raw=true "Title")
+
 С помощью nodeAffinity  мы привязываем под к той ноде, которая находится в соответствующей AvailabilityZone в которой находится и нах PVC, чтобы он мог подключится к нашей ноде(поду) 
 
 В отличии от Dynamic PVC — тут через nodeAffinity мы явно задаём поиск ноды для этого пода в зоне us-east-2a.
