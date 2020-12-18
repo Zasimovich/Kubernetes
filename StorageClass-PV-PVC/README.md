@@ -85,13 +85,120 @@ spec:
       storage: 5Gi
   volumeName: pv-static
   ```
-  
+
+  Модем создать PVC который вместо указания и привязки к PV, будет использовать StorageClass
+
+  ```
+  ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fileshare
+  labels:
+    app: fileshare
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: defaul
+  ```
+
+  ## Dynamic PersistentVolume provisioning
+
+Динамическое создание PersistentVolume аналогично статическому с той разницей, что мы не создаём EBS, и не создаём отдельного ресурса PersistentVolume — вместо этого мы опишем PersistentVolumeClaim, который самостоятельно создаст EBS, и смонтирует его к EC2 WorkerNode
+
+
+Команды дебага:
+\# kubectl describe pvc pvc-dynamic
+\# kubectl describe pv pvc-6d024b40-a239-4c35-8694-f060bd117053
+\# aws ec2 --profile arseniy --region us-east-2 describe-volumes --volume-ids vol-040a5e004876f1a40 --output json
+Определяем, в какой AvailabilityZone расположен наш EBS:
+\# aws ec2 --profile arseniy --region us-east-2 describe-volumes --volume-ids vol-0928650905a2491e2 --query '[Volumes[*].AvailabilityZone]'  --output text
+us-east-2a
+us-east-2a — окей, значит, нам надо и под создавать в той же AvailabilityZone.
+
+Пишем манифест для пода:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pv-static-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: failure-domain.beta.kubernetes.io/zone
+            operator: In
+            values:
+            - us-east-2a
+  volumes:
+    - name: pv-static-storage
+      persistentVolumeClaim:
+        claimName: pvc-static
+  containers:
+    - name: pv-static-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "nginx"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: pv-static-storage
+```
+С помощью nodeAffinity  мы привязываем под к той ноде, которая находится в соответствующей AvailabilityZone в которой находится и нах PVC, чтобы он мог подключится к нашей ноде(поду) 
+
+В отличии от Dynamic PVC — тут через nodeAffinity мы явно задаём поиск ноды для этого пода в зоне us-east-2a.
+
+## Удаление PersistentVolume и PersistentVolumeClaim
+
+Когда пользователь удаляет PVC, который используется подом, этот PVC удаляется не сразу — удаление откладывается, пока не будет остановлен использующий его под.
+
+Аналогично, при удалении PV, к которому есть binding от какого-либо PVC, этот PV тоже удаляется не сразу, до тех пор, пока существует связь между PVC и PV.
+
+## Reclaiming
+Когда пользователь заканчивает работу с PersistentVolume, он может удалить его объект из кластера, что бы освободить ресурс AWS EBS (reclaim).
+
+Reclaim policy для PersistentVolume указывает кластеру, что делать с овободившимся диском, и может иметь значение Retained, Recycled или Deleted.
+Retain
+
+Retain политика позволяет выполнять ручную очистку диска.
+
+После удаления соответвующего PersistentVolumeClaim, PersistentVolume остаётся, и отмечается как «released«, однако становится недоступен для новых PersistentVolumeClaim, т.к. содержит данные предыдущего PersistentVolumeClaim.
+
+Для того, что бы использовать такой ресурс повторно — можно либо удалить объект PersistentVolume, при этом AWS EBS останется доступен, био вручную удалить данные с диска.
+Delete
+
+При Delete — удаление PVC приводит к удалению и соответствующего устройсва, такого как AWS EBS, GCE PD или Azure Disk.
+
+Разделы, созданные автоматически наследуют политику из StorageClass, которая по умолчанию задана в Delete.
+Recycle
+
+Устарела. Выполняет удаление с раздела обычным rm -rf.
 
 
 
 
+Проверим в самом поде:
+\# kk exec -ti pv-dynamic-pod bash
+```
+root@pv-dynamic-pod:/# lsblk
+```
+nvme1n1 — наш диск.
 
+## Как пропатчить PVчтобы изменить RECLAIM POLICY
 
+Смотрим 
+\# kubectl get pv
+или
+\# kubectl get pv pv-static -o jsonpath='{.spec.persistentVolumeReclaimPolicy}'
+Патчим:
+\# kubectl patch pv <your-pv-name> -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+или на Retain
+\# kubectl patch pv <your-pv-name> -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
 
 
 
@@ -143,6 +250,10 @@ spec:
 ```
 Besides the **requiredDuringSchedulingIgnoredDuringExecution** type of node affinity there exists **preferredDuringSchedulingIgnoredDuringExecution**. The first can be thought of as a “hard” rule, while the second constitutes a “soft” rule that Kubernetes tries to enforce but will not guarantee.
   You can indicate that the rule is “soft” rather than a hard requirement, so if the scheduler can’t satisfy it, the pod will still be scheduled.
+
+
+
+
 
 # Test section for Formatting: URL: https://docs.gitlab.com/ee/user/markdown.html
 
